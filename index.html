@@ -15,6 +15,10 @@
   @media (max-width:860px){ main { grid-template-columns:1fr; } }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
   h2 { margin:0 0 8px; font-size:1.05rem; }
+  .scoreboard { display:flex; justify-content:space-between; gap:12px; margin-bottom:8px; padding:8px 12px; border-radius:6px; background:var(--ink); color:#fff; }
+  .scoreboard div { display:flex; flex-direction:column; }
+  .scoreboard span { color:#b9c6d8; font-size:.78rem; }
+  .scoreboard strong { font-family:Consolas, "Courier New", monospace; font-size:1.15rem; }
   canvas { width:100%; height:auto; display:block; background:#dff0f7; border-radius:6px; }
   label { display:block; margin:8px 0 2px; font-weight:600; font-size:.9rem; }
   input, select, button { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
@@ -45,6 +49,10 @@
 <main>
   <div>
     <section>
+      <div class="scoreboard">
+        <div><span>Distance</span><strong id="score">0.0 m</strong></div>
+        <div><span>Best</span><strong id="bestScore">0.0 m</strong></div>
+      </div>
       <canvas id="game" width="720" height="260" aria-label="Game area"></canvas>
       <div class="row" style="margin-top:10px">
         <button id="start">Start / Restart</button>
@@ -77,6 +85,8 @@
         <option value="9.81">Earth 9.81 m/s²</option>
         <option value="1.62">Moon 1.62 m/s²</option>
         <option value="3.71">Mars 3.71 m/s²</option>
+        <option value="8.87">Venus 8.87 m/s²</option>
+        <option value="3.70">Mercury 3.70 m/s²</option>
         <option value="custom">Custom</option>
       </select>
       <label for="g">Gravitational acceleration g (m/s²)</label>
@@ -141,6 +151,29 @@ let calc = {};                           // calculated results
 let pxPerM = 30;                         // drawing scale: pixels per metre
 let state = 'idle';                      // 'idle' | 'running' | 'over'
 let player, obstacles, distance, nextGap, jumpLog, lastLog, lastTime;
+const PLANETS = {
+  '9.81': { name:'Earth', skyTop:'#75c9ef', skyBottom:'#e7f5ed', far:'#9fc77c', near:'#668e4f', soil:'#74513b', surface:'#8bb653', accent:'#f6cf75' },
+  '1.62': { name:'Moon', skyTop:'#101a30', skyBottom:'#3e4c60', far:'#586171', near:'#343b49', soil:'#4b4d52', surface:'#a5a7a6', accent:'#d9e8f5' },
+  '3.71': { name:'Mars', skyTop:'#bd5547', skyBottom:'#f5a36b', far:'#bd6654', near:'#873f39', soil:'#6f3833', surface:'#e08058', accent:'#ffd08a' },
+  '8.87': { name:'Venus', skyTop:'#d99545', skyBottom:'#f5d18a', far:'#d5a655', near:'#a96d3d', soil:'#694333', surface:'#f2a348', accent:'#fff0bb' },
+  '3.70': { name:'Mercury', skyTop:'#202632', skyBottom:'#54545a', far:'#66636a', near:'#414047', soil:'#34343a', surface:'#858187', accent:'#fff1b2' },
+  custom: { name:'Custom world', skyTop:'#315c65', skyBottom:'#95b6a1', far:'#668878', near:'#405f55', soil:'#354c46', surface:'#aac291', accent:'#e8e6a5' }
+};
+let planetKey = '9.81';
+const BEST_SCORE_KEY = 'jumplab-best-score';
+let bestDistance = (() => {
+  try {
+    const saved = Number(localStorage.getItem(BEST_SCORE_KEY));
+    return Number.isFinite(saved) && saved > 0 ? saved : 0;
+  } catch {
+    return 0;
+  }
+})();
+
+function updateScoreboard() {
+  $('score').textContent = distance.toFixed(1) + ' m';
+  $('bestScore').textContent = bestDistance.toFixed(1) + ' m';
+}
 
 /* ---------- PHYSICS: closed-form results (the equations) ---------- */
 function formulas(v0, g) {
@@ -173,13 +206,15 @@ function parseNum(text) {
 function applyInputs() {
   let v0 = parseNum($('v0').value), g = parseNum($('g').value), sp = parseNum($('speed').value);
   if ($('unit').value === 'kmh') v0 = v0 / 3.6;                 // km/h → m/s
+  planetKey = PLANETS[$('planet').value] ? $('planet').value : 'custom';
+  cv.setAttribute('aria-label', PLANETS[planetKey].name + ' game area');
   const errs = [];
   const bad = (x, lim) => !isFinite(x) || x < lim[0] || x > lim[1];
   if (bad(v0, LIMITS.v0))   errs.push('Jump speed must be a number from 1 to 15 m/s (3.6 to 54 km/h).');
   if (bad(g, LIMITS.g))     errs.push('Gravity must be a number from 0.5 to 25 m/s².');
   if (bad(sp, LIMITS.speed)) errs.push('Game speed must be a number from 1 to 20 m/s.');
   $('err').textContent = errs.join(' ');
-  if (errs.length) return false;           // keep the old, valid inputs
+  if (errs.length) { draw(); return false; } // keep old physics, but reflect the selected planet
   P = { v0, g, speed: sp };
   const f = formulas(v0, g);
   calc = { ...f, range: sp * f.tAir };
@@ -198,6 +233,7 @@ function resetGame() {
   state = 'idle';
   player = { y:0, v:0, air:false };
   obstacles = []; distance = 0; nextGap = 6; jumpLog = null;
+  updateScoreboard();
   updateLive(); draw();
   $('status').textContent = 'Press Start, then jump with Space or the Up arrow.';
 }
@@ -216,6 +252,8 @@ function loop(now) {
   if (state !== 'running') return;
   const dt = Math.min((now - lastTime) / 1000, 1/30); lastTime = now;
   distance += P.speed * dt;
+  if (distance > bestDistance) bestDistance = distance;
+  updateScoreboard();
   obstacles.forEach(o => o.x -= P.speed * dt);
   obstacles = obstacles.filter(o => o.x + o.w > -1);
   const last = obstacles[obstacles.length - 1];
@@ -233,6 +271,7 @@ function loop(now) {
   for (const o of obstacles) {          // collision: overlap in x and feet below obstacle top
     if (o.x < PLAYER_X + PLAYER_W && o.x + o.w > PLAYER_X && player.y < o.h) {
       state = 'over';
+      try { localStorage.setItem(BEST_SCORE_KEY, String(bestDistance)); } catch {}
       $('status').textContent = 'Crashed! Distance: ' + distance.toFixed(1) + ' m. Press Start to try again, or raise v₀.';
     }
   }
@@ -248,28 +287,142 @@ function updateLive() {
 }
 
 /* ---------- Drawing the game ---------- */
+function drawRidge(W, gy, color, points) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, gy);
+  points.forEach(([x, y]) => ctx.lineTo(W * x, gy * y));
+  ctx.lineTo(W, gy); ctx.closePath(); ctx.fill();
+}
+
+function drawBackground(W, H, gy, theme) {
+  const sky = ctx.createLinearGradient(0, 0, 0, gy);
+  sky.addColorStop(0, theme.skyTop); sky.addColorStop(1, theme.skyBottom);
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, gy);
+
+  if (planetKey === '9.81') {
+    ctx.fillStyle = '#f7d97e'; ctx.beginPath(); ctx.arc(W * 0.82, gy * 0.23, 24, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.75)';
+    for (const [x, y] of [[.20,.28],[.53,.17]]) {
+      ctx.beginPath(); ctx.arc(W*x, gy*y, 10, 0, Math.PI*2); ctx.arc(W*x+12, gy*y-5, 13, 0, Math.PI*2); ctx.arc(W*x+27, gy*y, 9, 0, Math.PI*2); ctx.fill();
+    }
+    drawRidge(W, gy, theme.far, [[0,.78],[.16,.65],[.3,.76],[.48,.62],[.64,.76],[.83,.63],[1,.74]]);
+    drawRidge(W, gy, theme.near, [[0,.86],[.18,.76],[.37,.83],[.58,.73],[.78,.84],[1,.75]]);
+  } else if (planetKey === '1.62') {
+    ctx.fillStyle = '#e8f3ff';
+    for (let i = 0; i < 34; i++) {
+      const x = (i * 137 + 31) % W, y = (i * 71 + 19) % Math.max(gy * .72, 1);
+      ctx.globalAlpha = .35 + (i % 4) * .15; ctx.fillRect(x, y, i % 5 === 0 ? 2 : 1, i % 5 === 0 ? 2 : 1);
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#4a91ba'; ctx.beginPath(); ctx.arc(W*.78, gy*.28, 22, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#68a879'; ctx.beginPath(); ctx.ellipse(W*.78-5, gy*.27, 10, 5, -.4, 0, Math.PI*2); ctx.fill();
+    drawRidge(W, gy, theme.far, [[0,.78],[.16,.68],[.28,.78],[.44,.64],[.57,.76],[.77,.67],[1,.8]]);
+    drawRidge(W, gy, theme.near, [[0,.88],[.15,.79],[.31,.86],[.5,.76],[.7,.86],[.87,.78],[1,.85]]);
+  } else if (planetKey === '3.71') {
+    ctx.fillStyle = '#ffe0a0'; ctx.beginPath(); ctx.arc(W*.82, gy*.24, 20, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#804d58'; ctx.beginPath(); ctx.arc(W*.18, gy*.2, 7, 0, Math.PI*2); ctx.fill();
+    drawRidge(W, gy, theme.far, [[0,.83],[.12,.62],[.24,.8],[.4,.56],[.57,.8],[.73,.64],[.86,.78],[1,.58]]);
+    drawRidge(W, gy, theme.near, [[0,.88],[.2,.76],[.38,.85],[.57,.71],[.77,.85],[1,.74]]);
+  } else if (planetKey === '8.87') {
+    ctx.fillStyle = 'rgba(255,240,188,.35)';
+    for (let i = 0; i < 7; i++) { ctx.beginPath(); ctx.ellipse(W*(i*.19-.05), gy*(.24+i%3*.13), W*.18, 8+i%2*4, 0, 0, Math.PI*2); ctx.fill(); }
+    drawRidge(W, gy, theme.far, [[0,.77],[.14,.72],[.25,.42],[.34,.72],[.52,.77],[.69,.45],[.79,.75],[1,.68]]);
+    drawRidge(W, gy, theme.near, [[0,.87],[.18,.8],[.35,.86],[.52,.78],[.7,.85],[.85,.77],[1,.86]]);
+  } else if (planetKey === '3.70') {
+    ctx.fillStyle = '#fff0b0'; ctx.beginPath(); ctx.arc(W*1.02, gy*.28, 54, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff8d6'; ctx.beginPath(); ctx.arc(W*1.02, gy*.28, 40, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#e3e4ed';
+    for (let i = 0; i < 28; i++) { const x=(i*149+23)%W, y=(i*83+11)%Math.max(gy*.7,1); ctx.globalAlpha=.35+(i%3)*.2; ctx.fillRect(x,y,1.5,1.5); }
+    ctx.globalAlpha = 1;
+    drawRidge(W, gy, theme.far, [[0,.75],[.13,.7],[.2,.61],[.34,.75],[.49,.64],[.63,.78],[.82,.68],[1,.76]]);
+    drawRidge(W, gy, theme.near, [[0,.87],[.17,.8],[.35,.86],[.54,.77],[.74,.86],[.9,.78],[1,.85]]);
+  } else {
+    ctx.fillStyle = 'rgba(232,230,165,.75)'; ctx.beginPath(); ctx.arc(W*.8, gy*.25, 20, 0, Math.PI*2); ctx.fill();
+    for (let i = 0; i < 20; i++) { ctx.fillStyle='rgba(255,255,255,.45)'; ctx.fillRect((i*127+41)%W, (i*53+17)%(gy*.65), 2, 2); }
+    drawRidge(W, gy, theme.far, [[0,.79],[.2,.68],[.39,.77],[.57,.61],[.75,.78],[1,.68]]);
+    drawRidge(W, gy, theme.near, [[0,.88],[.2,.78],[.4,.85],[.62,.76],[.82,.84],[1,.77]]);
+  }
+
+  const ground = ctx.createLinearGradient(0, gy, 0, H);
+  ground.addColorStop(0, theme.surface); ground.addColorStop(.16, theme.soil); ground.addColorStop(1, theme.soil);
+  ctx.fillStyle = ground; ctx.fillRect(0, gy, W, H-gy);
+  ctx.strokeStyle = theme.accent; ctx.globalAlpha = .65; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, gy+1); ctx.lineTo(W, gy+1); ctx.stroke(); ctx.globalAlpha = 1;
+  ctx.fillStyle = theme.accent;
+  for (let i = 0; i < 11; i++) ctx.fillRect((i*83+17)%W, gy+12+(i%3)*7, 3+(i%2)*2, 1);
+}
+
+function drawObstacle(o, gy, theme) {
+  const x = o.x * pxPerM, w = Math.max(o.w * pxPerM, 11), h = Math.max(o.h * pxPerM, 18), base = gy;
+  ctx.save();
+  if (planetKey === '9.81') {
+    ctx.fillStyle = '#76513a'; ctx.fillRect(x+w*.23, base-h*.72, w*.54, h*.72);
+    ctx.fillStyle = '#a4774e'; ctx.fillRect(x+w*.15, base-h*.78, w*.7, h*.16);
+    ctx.fillStyle = '#477e3f'; ctx.beginPath(); ctx.arc(x+w*.5, base-h*.89, w*.45, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#86ad52'; ctx.beginPath(); ctx.arc(x+w*.24, base-h*.84, w*.28, 0, Math.PI*2); ctx.arc(x+w*.76, base-h*.82, w*.26, 0, Math.PI*2); ctx.fill();
+  } else if (planetKey === '1.62') {
+    ctx.fillStyle = '#909398'; ctx.beginPath(); ctx.moveTo(x+w*.08,base); ctx.lineTo(x+w*.16,base-h*.4); ctx.lineTo(x+w*.35,base-h*.72); ctx.lineTo(x+w*.53,base-h*.55); ctx.lineTo(x+w*.77,base-h*.9); ctx.lineTo(x+w*.94,base-h*.38); ctx.lineTo(x+w,base); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#c2c4c4'; ctx.beginPath(); ctx.arc(x+w*.65,base-h*.37,Math.max(1.5,w*.1),0,Math.PI*2); ctx.fill();
+  } else if (planetKey === '3.71') {
+    ctx.fillStyle = '#742e32'; ctx.beginPath(); ctx.moveTo(x+w*.08,base); ctx.lineTo(x+w*.24,base-h*.62); ctx.lineTo(x+w*.4,base-h*.42); ctx.lineTo(x+w*.52,base-h); ctx.lineTo(x+w*.68,base-h*.53); ctx.lineTo(x+w*.83,base-h*.72); ctx.lineTo(x+w*.97,base); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#e18562'; ctx.fillRect(x+w*.49,base-h*.56,w*.09,h*.34);
+  } else if (planetKey === '8.87') {
+    ctx.fillStyle = '#402d2b'; ctx.fillRect(x+w*.08,base-h*.27,w*.84,h*.27);
+    ctx.fillStyle = '#ec803e'; ctx.beginPath(); ctx.moveTo(x+w*.12,base-h*.2); ctx.lineTo(x+w*.22,base-h*.86); ctx.lineTo(x+w*.36,base-h*.42); ctx.lineTo(x+w*.5,base-h); ctx.lineTo(x+w*.63,base-h*.43); ctx.lineTo(x+w*.79,base-h*.8); ctx.lineTo(x+w*.89,base-h*.2); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#ffd276'; ctx.fillRect(x+w*.46,base-h*.56,w*.1,h*.32);
+  } else if (planetKey === '3.70') {
+    ctx.fillStyle = '#37363d'; ctx.beginPath(); ctx.moveTo(x+w*.06,base-h*.18); ctx.lineTo(x+w*.22,base-h*.72); ctx.lineTo(x+w*.47,base-h); ctx.lineTo(x+w*.73,base-h*.82); ctx.lineTo(x+w*.96,base-h*.38); ctx.lineTo(x+w*.84,base); ctx.lineTo(x+w*.18,base); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#8b8680'; ctx.beginPath(); ctx.ellipse(x+w*.55,base-h*.43,Math.max(1.5,w*.15),Math.max(1,w*.08),-.3,0,Math.PI*2); ctx.fill();
+  } else {
+    ctx.fillStyle = '#526a5c'; ctx.beginPath(); ctx.moveTo(x+w*.08,base); ctx.lineTo(x+w*.18,base-h*.72); ctx.lineTo(x+w*.4,base-h*.48); ctx.lineTo(x+w*.57,base-h); ctx.lineTo(x+w*.76,base-h*.54); ctx.lineTo(x+w*.94,base); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = theme.accent; ctx.fillRect(x+w*.53,base-h*.48,w*.08,h*.27);
+  }
+  ctx.restore();
+}
+
+function drawHuman(x, y, w, h) {
+  const cx = x+w*.5, headR = Math.max(2.5, w*.17), skin = '#d99b70';
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(cx, y+h*.17, headR, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#49352e'; ctx.beginPath(); ctx.arc(cx, y+h*.14, headR, Math.PI, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#267f74'; ctx.beginPath(); ctx.moveTo(cx-w*.19,y+h*.31); ctx.lineTo(cx+w*.19,y+h*.31); ctx.lineTo(cx+w*.15,y+h*.58); ctx.lineTo(cx-w*.15,y+h*.58); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = skin; ctx.lineWidth = Math.max(2,w*.09); ctx.beginPath(); ctx.moveTo(cx-w*.16,y+h*.36); ctx.lineTo(cx-w*.34,y+h*.55); ctx.moveTo(cx+w*.16,y+h*.36); ctx.lineTo(cx+w*.34,y+h*.51); ctx.stroke();
+  ctx.strokeStyle = '#26384c'; ctx.lineWidth = Math.max(2,w*.1); ctx.beginPath(); ctx.moveTo(cx-w*.08,y+h*.58); ctx.lineTo(cx-w*.19,y+h*.88); ctx.moveTo(cx+w*.08,y+h*.58); ctx.lineTo(cx+w*.2,y+h*.86); ctx.stroke();
+  ctx.strokeStyle = '#f0eee7'; ctx.lineWidth = Math.max(2,w*.13); ctx.beginPath(); ctx.moveTo(cx-w*.2,y+h*.88); ctx.lineTo(cx-w*.05,y+h*.91); ctx.moveTo(cx+w*.2,y+h*.86); ctx.lineTo(cx+w*.34,y+h*.89); ctx.stroke();
+  ctx.restore();
+}
+
+function drawAstronaut(x, y, w, h) {
+  const cx = x+w*.5, r = Math.max(3.5, w*.22);
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.fillStyle = '#344452'; ctx.fillRect(x+w*.76,y+h*.37,w*.19,h*.33);
+  ctx.fillStyle = '#e5e8e4'; ctx.fillRect(cx-w*.22,y+h*.32,w*.44,h*.39);
+  ctx.strokeStyle = '#d1d5d1'; ctx.lineWidth = Math.max(2,w*.12); ctx.beginPath(); ctx.moveTo(cx-w*.19,y+h*.39); ctx.lineTo(x+w*.12,y+h*.59); ctx.moveTo(cx+w*.19,y+h*.39); ctx.lineTo(x+w*.88,y+h*.55); ctx.stroke();
+  ctx.strokeStyle = '#e5e8e4'; ctx.lineWidth = Math.max(2,w*.14); ctx.beginPath(); ctx.moveTo(cx-w*.1,y+h*.69); ctx.lineTo(cx-w*.19,y+h*.9); ctx.moveTo(cx+w*.1,y+h*.69); ctx.lineTo(cx+w*.21,y+h*.89); ctx.stroke();
+  ctx.fillStyle = '#273544'; ctx.fillRect(cx-w*.29,y+h*.88,w*.22,h*.1); ctx.fillRect(cx+w*.08,y+h*.87,w*.24,h*.1);
+  ctx.fillStyle = '#e5e8e4'; ctx.beginPath(); ctx.arc(cx,y+h*.18,r+2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#31566a'; ctx.beginPath(); ctx.arc(cx,y+h*.18,r,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(217,242,247,.8)'; ctx.beginPath(); ctx.ellipse(cx-r*.3,y+h*.18,r*.28,r*.48,-.4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#e0a84c'; ctx.fillRect(cx-w*.12,y+h*.51,w*.24,Math.max(1.5,h*.06));
+  ctx.restore();
+}
+
 function draw() {
-  const W = cv.width, H = cv.height, gy = H - GROUND;
+  const W = cv.width, H = cv.height, gy = H - GROUND, theme = PLANETS[planetKey];
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#9a7b4f'; ctx.fillRect(0, gy, W, GROUND);              // ground
-  ctx.strokeStyle = 'rgba(20,33,61,.35)'; ctx.setLineDash([6, 5]);        // peak-height guide
+  drawBackground(W, H, gy, theme);
+  ctx.strokeStyle = 'rgba(20,33,61,.35)'; ctx.setLineDash([6, 5]);
   const peakY = gy - calc.hMax * pxPerM;
   ctx.beginPath(); ctx.moveTo(0, peakY); ctx.lineTo(W, peakY); ctx.stroke(); ctx.setLineDash([]);
-  ctx.fillStyle = '#14213d'; ctx.font = '12px sans-serif';
+  ctx.fillStyle = theme.name === 'Moon' || theme.name === 'Mercury' ? '#fff' : '#14213d'; ctx.font = '12px sans-serif';
+  ctx.fillText(theme.name.toUpperCase() + ' SURFACE', 10, 18);
   ctx.fillText('peak = ' + calc.hMax.toFixed(2) + ' m', 8, peakY - 4);
-  for (const o of obstacles) {                                            // obstacles (cactus shape)
-    const x = o.x * pxPerM, w = o.w * pxPerM, h = o.h * pxPerM;
-    ctx.fillStyle = '#2f7d4f';
-    ctx.fillRect(x, gy - h, w, h);
-    ctx.fillRect(x - w * 0.6, gy - h * 0.65, w * 0.6, w * 0.4);
-    ctx.fillRect(x + w, gy - h * 0.8, w * 0.6, w * 0.4);
-  }
-  const px = PLAYER_X * pxPerM, pw = PLAYER_W * pxPerM, ph = PLAYER_H * pxPerM;
-  const py = gy - player.y * pxPerM - ph;                                  // player (simple robot)
-  ctx.fillStyle = '#d1432b'; ctx.fillRect(px, py, pw, ph * 0.8);
-  ctx.fillStyle = '#14213d'; ctx.fillRect(px + pw * 0.15, py + ph * 0.8, pw * 0.25, ph * 0.2);
-  ctx.fillRect(px + pw * 0.6, py + ph * 0.8, pw * 0.25, ph * 0.2);
-  ctx.fillStyle = '#fff'; ctx.fillRect(px + pw * 0.55, py + ph * 0.15, pw * 0.3, pw * 0.3);
+  for (const o of obstacles) drawObstacle(o, gy, theme);
+  const ph = Math.max(PLAYER_H * pxPerM, 25), pw = ph * .6;
+  const px = PLAYER_X * pxPerM, py = gy - player.y * pxPerM - ph;
+  if (planetKey === '9.81') drawHuman(px, py, pw, ph);
+  else drawAstronaut(px, py, pw, ph);
 }
 
 /* ---------- Graphs (solid = measured, dashed = equation) ---------- */
@@ -325,7 +478,7 @@ $('start').onclick = startGame;
 $('jumpBtn').onclick = jump;
 $('apply').onclick = applyInputs;
 $('runTests').onclick = runTests;
-$('planet').onchange = () => { if ($('planet').value !== 'custom') { $('g').value = $('planet').value; applyInputs(); } };
+$('planet').onchange = () => { if ($('planet').value !== 'custom') $('g').value = $('planet').value; applyInputs(); };
 document.addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) { if (e.key === 'Enter') applyInputs(); return; }
   if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
