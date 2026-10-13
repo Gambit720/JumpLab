@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JumpLab: Projectile Motion Runner</title>
+<style>
+  :root { --ink:#14213d; --paper:#eef3f7; --panel:#ffffff; --line:#c5d0dc; --hot:#d1432b; --cool:#1f6f8b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { padding:18px 24px; background:var(--ink); color:#fff; }
+  header h1 { margin:0; font-size:1.5rem; }
+  header p { margin:2px 0 0; color:#b9c6d8; }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:18px; grid-template-columns:minmax(0,1fr) 320px; }
+  @media (max-width:860px){ main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  h2 { margin:0 0 8px; font-size:1.05rem; }
+  canvas { width:100%; height:auto; display:block; background:#dff0f7; border-radius:6px; }
+  label { display:block; margin:8px 0 2px; font-weight:600; font-size:.9rem; }
+  input, select, button { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
+  input[type=text] { width:100%; }
+  button { background:var(--cool); color:#fff; border:0; cursor:pointer; padding:8px 14px; }
+  button.alt { background:var(--ink); }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--hot); outline-offset:1px; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  .num { font-family:Consolas, "Courier New", monospace; font-weight:700; }
+  .err { color:var(--hot); min-height:1.4em; font-size:.9rem; margin:6px 0 0; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; }
+  th, td { border:1px solid var(--line); padding:4px 6px; text-align:right; }
+  th:first-child, td:first-child { text-align:left; }
+  .pass { color:#1b7a3d; font-weight:700; } .fail { color:var(--hot); font-weight:700; }
+  .graphs { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:600px){ .graphs { grid-template-columns:1fr; } }
+  .wide { grid-column:1 / -1; }
+  small { color:#51617a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>JumpLab: Projectile Motion Runner</h1>
+  <p>Jump over the obstacles. Every jump follows real kinematics equations.</p>
+</header>
+
+<main>
+  <div>
+    <section>
+      <canvas id="game" width="720" height="260" aria-label="Game area"></canvas>
+      <div class="row" style="margin-top:10px">
+        <button id="start">Start / Restart</button>
+        <button id="jumpBtn" class="alt">Jump (or press Space)</button>
+      </div>
+      <p id="status" class="err" style="color:var(--ink)">Press Start, then jump with Space or the Up arrow.</p>
+      <small id="scaleNote"></small>
+    </section>
+
+    <section style="margin-top:18px">
+      <h2>Graphs of the most recent jump</h2>
+      <div class="graphs">
+        <canvas id="gy" width="340" height="200"></canvas>
+        <canvas id="gv" width="340" height="200"></canvas>
+      </div>
+      <small>Solid line = measured from the game. Dashed line = equation. If they match, the code follows the physics.</small>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>Inputs (you can change these)</h2>
+      <label for="v0">Jump speed v₀</label>
+      <div class="row">
+        <input id="v0" type="text" inputmode="decimal" value="6">
+        <select id="unit"><option value="ms">m/s</option><option value="kmh">km/h</option></select>
+      </div>
+      <label for="planet">Gravity (planet)</label>
+      <select id="planet" style="width:100%">
+        <option value="9.81">Earth 9.81 m/s²</option>
+        <option value="1.62">Moon 1.62 m/s²</option>
+        <option value="3.71">Mars 3.71 m/s²</option>
+        <option value="custom">Custom</option>
+      </select>
+      <label for="g">Gravitational acceleration g (m/s²)</label>
+      <input id="g" type="text" inputmode="decimal" value="9.81">
+      <label for="speed">Game speed (m/s, horizontal)</label>
+      <input id="speed" type="text" inputmode="decimal" value="6">
+      <p style="margin:10px 0 0"><button id="apply">Apply inputs</button></p>
+      <p id="err" class="err" role="alert"></p>
+    </section>
+
+    <section style="margin-top:18px">
+      <h2>Calculated from your inputs</h2>
+      <table>
+        <tr><td>Time to peak = v₀/g</td><td class="num"><span id="rTp">-</span> s</td></tr>
+        <tr><td>Maximum height = v₀²/(2g)</td><td class="num"><span id="rH">-</span> m</td></tr>
+        <tr><td>Time in air = 2v₀/g</td><td class="num"><span id="rT">-</span> s</td></tr>
+        <tr><td>Horizontal distance per jump = speed × time in air</td><td class="num"><span id="rR">-</span> m</td></tr>
+      </table>
+    </section>
+
+    <section style="margin-top:18px">
+      <h2>Live values</h2>
+      <table>
+        <tr><td>Time in jump t</td><td class="num"><span id="lT">0.00</span> s</td></tr>
+        <tr><td>Height (vertical displacement) y</td><td class="num"><span id="lY">0.00</span> m</td></tr>
+        <tr><td>Vertical velocity v</td><td class="num"><span id="lV">0.00</span> m/s</td></tr>
+        <tr><td>Vertical acceleration a</td><td class="num"><span id="lA">0.00</span> m/s²</td></tr>
+        <tr><td>Horizontal displacement x</td><td class="num"><span id="lX">0.0</span> m</td></tr>
+      </table>
+    </section>
+  </div>
+
+  <section class="wide">
+    <h2>Validation panel: formula vs. simulation</h2>
+    <p>This runs three input sets through the same step-by-step code the game uses and compares the result to the equations. Also calculate each case <b>by hand</b> and show your working in the video.</p>
+    <button id="runTests" class="alt">Run 3 test cases</button>
+    <div id="testOut" style="margin-top:10px; overflow-x:auto"></div>
+  </section>
+
+  <section class="wide">
+    <h2>How to use, assumptions, application, credits</h2>
+    <p><b>Instructions:</b> enter values and press Apply inputs, press Start, then press Space or the Up arrow to jump. Hit an obstacle and the run ends. Your score is the horizontal distance in metres.</p>
+    <p><b>Assumptions:</b> constant gravitational acceleration during a jump, no air resistance, jump starts from the ground with vertical speed v₀, motion in a straight line. The animation uses a declared scale (see the note under the game); labels and numbers use real SI units.</p>
+    <p><b>Real-life application:</b> a jump is projectile motion. The same equations describe athletes, vehicles launching off ramps, and why a person jumps much higher on the Moon.</p>
+    <p><b>Credits:</b> inspired by the Chrome "dino" offline game (original sprites and code not used). Starter code drafted with AI assistance (Claude by Anthropic) and tested/edited by our group. [Add your names and what each person did here.]</p>
+  </section>
+</main>
+
+<script>
+/* =====================================================================
+   JUMPLAB: all physics is in the functions marked PHYSICS.
+   Units: metres (m), seconds (s), m/s, m/s². Pixels are for drawing only.
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+const cv = $('game'), ctx = cv.getContext('2d');
+const GROUND = 40;                       // pixels of ground at the bottom of the canvas
+const PLAYER_X = 2, PLAYER_W = 0.6, PLAYER_H = 1.0;   // metres
+const LIMITS = { v0:[1, 15], g:[0.5, 25], speed:[1, 20] };
+
+let P = { v0:6, g:9.81, speed:6 };       // current inputs in SI units
+let calc = {};                           // calculated results
+let pxPerM = 30;                         // drawing scale: pixels per metre
+let state = 'idle';                      // 'idle' | 'running' | 'over'
+let player, obstacles, distance, nextGap, jumpLog, lastLog, lastTime;
+
+/* ---------- PHYSICS: closed-form results (the equations) ---------- */
+function formulas(v0, g) {
+  return {
+    tPeak: v0 / g,                // from v = v0 - g t = 0
+    hMax:  v0 * v0 / (2 * g),     // from v² = v0² - 2 g Δy at the peak
+    tAir:  2 * v0 / g             // from Δy = v0 t - ½ g t² = 0
+  };
+}
+
+/* ---------- PHYSICS: one time step of a jump ----------
+   Constant acceleration -a = -g, so over a small step dt:
+   v_new = v - g dt     and     y_new = y + (average velocity) × dt
+   If the step crosses the ground (y < 0), solve y + v τ - ½ g τ² = 0 for τ. */
+function stepJump(s, g, dt) {
+  const vNew = s.v - g * dt;
+  const yNew = s.y + (s.v + vNew) / 2 * dt;
+  if (yNew > 0) { s.y = yNew; s.v = vNew; s.t += dt; return false; }
+  const tau = (s.v + Math.sqrt(s.v * s.v + 2 * g * s.y)) / g;   // time left until landing
+  s.v = -Math.sqrt(s.v * s.v + 2 * g * s.y);                    // v² = v₀² + 2aΔy at landing
+  s.y = 0; s.t += tau;
+  return true;                                                  // landed
+}
+
+/* ---------- Input handling and validation ---------- */
+function parseNum(text) {
+  const s = String(text).trim().replace(',', '.');
+  return (s === '' || isNaN(Number(s))) ? NaN : Number(s);
+}
+function applyInputs() {
+  let v0 = parseNum($('v0').value), g = parseNum($('g').value), sp = parseNum($('speed').value);
+  if ($('unit').value === 'kmh') v0 = v0 / 3.6;                 // km/h → m/s
+  const errs = [];
+  const bad = (x, lim) => !isFinite(x) || x < lim[0] || x > lim[1];
+  if (bad(v0, LIMITS.v0))   errs.push('Jump speed must be a number from 1 to 15 m/s (3.6 to 54 km/h).');
+  if (bad(g, LIMITS.g))     errs.push('Gravity must be a number from 0.5 to 25 m/s².');
+  if (bad(sp, LIMITS.speed)) errs.push('Game speed must be a number from 1 to 20 m/s.');
+  $('err').textContent = errs.join(' ');
+  if (errs.length) return false;           // keep the old, valid inputs
+  P = { v0, g, speed: sp };
+  const f = formulas(v0, g);
+  calc = { ...f, range: sp * f.tAir };
+  $('rTp').textContent = f.tPeak.toFixed(3);
+  $('rH').textContent  = f.hMax.toFixed(3);
+  $('rT').textContent  = f.tAir.toFixed(3);
+  $('rR').textContent  = calc.range.toFixed(3);
+  pxPerM = Math.min(40, (cv.height - GROUND - 20) / Math.max(f.hMax, 1.6));
+  $('scaleNote').textContent = 'Drawing scale: 1 m = ' + pxPerM.toFixed(1) + ' px (changes with your inputs so the jump fits the screen).';
+  resetGame(); drawGraphs(); return true;
+}
+
+/* ---------- Game ---------- */
+const worldW = () => cv.width / pxPerM;     // visible width in metres
+function resetGame() {
+  state = 'idle';
+  player = { y:0, v:0, air:false };
+  obstacles = []; distance = 0; nextGap = 6; jumpLog = null;
+  updateLive(); draw();
+  $('status').textContent = 'Press Start, then jump with Space or the Up arrow.';
+}
+function startGame() {
+  if (!applyInputs()) return;
+  resetGame(); state = 'running'; lastTime = performance.now();
+  $('status').textContent = 'Running. Jump over the obstacles!';
+  requestAnimationFrame(loop);
+}
+function jump() {
+  if (state !== 'running' || player.air) return;
+  player.air = true; player.y = 0; player.v = P.v0;
+  jumpLog = { t:0, pts:[{ t:0, y:0, v:P.v0 }] };
+}
+function loop(now) {
+  if (state !== 'running') return;
+  const dt = Math.min((now - lastTime) / 1000, 1/30); lastTime = now;
+  distance += P.speed * dt;
+  obstacles.forEach(o => o.x -= P.speed * dt);
+  obstacles = obstacles.filter(o => o.x + o.w > -1);
+  const last = obstacles[obstacles.length - 1];
+  if (!last || last.x < worldW() - nextGap) {
+    obstacles.push({ x:worldW(), w:0.6, h:1.0 });
+    nextGap = P.speed * calc.tAir + 3 + Math.random() * 5;     // always leaves room to land and jump again
+  }
+  if (player.air) {
+    const s = { y:player.y, v:player.v, t:jumpLog.t };
+    const landed = stepJump(s, P.g, dt);
+    player.y = s.y; player.v = s.v; jumpLog.t = s.t;
+    jumpLog.pts.push({ t:s.t, y:s.y, v:s.v });
+    if (landed) { player.air = false; player.v = 0; lastLog = jumpLog; drawGraphs(); }
+  }
+  for (const o of obstacles) {          // collision: overlap in x and feet below obstacle top
+    if (o.x < PLAYER_X + PLAYER_W && o.x + o.w > PLAYER_X && player.y < o.h) {
+      state = 'over';
+      $('status').textContent = 'Crashed! Distance: ' + distance.toFixed(1) + ' m. Press Start to try again, or raise v₀.';
+    }
+  }
+  updateLive(); draw();
+  requestAnimationFrame(loop);
+}
+function updateLive() {
+  $('lT').textContent = (player.air && jumpLog ? jumpLog.t : 0).toFixed(2);
+  $('lY').textContent = player.y.toFixed(2);
+  $('lV').textContent = player.v.toFixed(2);
+  $('lA').textContent = (player.air ? -P.g : 0).toFixed(2);
+  $('lX').textContent = distance.toFixed(1);
+}
+
+/* ---------- Drawing the game ---------- */
+function draw() {
+  const W = cv.width, H = cv.height, gy = H - GROUND;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#9a7b4f'; ctx.fillRect(0, gy, W, GROUND);              // ground
+  ctx.strokeStyle = 'rgba(20,33,61,.35)'; ctx.setLineDash([6, 5]);        // peak-height guide
+  const peakY = gy - calc.hMax * pxPerM;
+  ctx.beginPath(); ctx.moveTo(0, peakY); ctx.lineTo(W, peakY); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#14213d'; ctx.font = '12px sans-serif';
+  ctx.fillText('peak = ' + calc.hMax.toFixed(2) + ' m', 8, peakY - 4);
+  for (const o of obstacles) {                                            // obstacles (cactus shape)
+    const x = o.x * pxPerM, w = o.w * pxPerM, h = o.h * pxPerM;
+    ctx.fillStyle = '#2f7d4f';
+    ctx.fillRect(x, gy - h, w, h);
+    ctx.fillRect(x - w * 0.6, gy - h * 0.65, w * 0.6, w * 0.4);
+    ctx.fillRect(x + w, gy - h * 0.8, w * 0.6, w * 0.4);
+  }
+  const px = PLAYER_X * pxPerM, pw = PLAYER_W * pxPerM, ph = PLAYER_H * pxPerM;
+  const py = gy - player.y * pxPerM - ph;                                  // player (simple robot)
+  ctx.fillStyle = '#d1432b'; ctx.fillRect(px, py, pw, ph * 0.8);
+  ctx.fillStyle = '#14213d'; ctx.fillRect(px + pw * 0.15, py + ph * 0.8, pw * 0.25, ph * 0.2);
+  ctx.fillRect(px + pw * 0.6, py + ph * 0.8, pw * 0.25, ph * 0.2);
+  ctx.fillStyle = '#fff'; ctx.fillRect(px + pw * 0.55, py + ph * 0.15, pw * 0.3, pw * 0.3);
+}
+
+/* ---------- Graphs (solid = measured, dashed = equation) ---------- */
+function drawGraph(canvas, key, lo, hi, label) {
+  const c = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  const L = 52, B = 32, T = 14, R = 10, tMax = calc.tAir;
+  const sx = t => L + t / tMax * (W - L - R), sy = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  c.clearRect(0, 0, W, H); c.font = '12px sans-serif'; c.fillStyle = '#14213d'; c.strokeStyle = '#8796ab';
+  c.beginPath(); c.moveTo(L, T); c.lineTo(L, H - B); c.moveTo(L, sy(0)); c.lineTo(W - R, sy(0)); c.stroke();
+  c.fillText('0', L - 14, sy(0) + 4); c.fillText(hi.toFixed(1), 4, T + 8); c.fillText(lo.toFixed(1), 4, H - B);
+  c.fillText(tMax.toFixed(2), W - R - 28, sy(0) + 16);
+  c.fillText('time t (s)', W / 2 - 25, H - 8);
+  c.save(); c.translate(12, H / 2 + 30); c.rotate(-Math.PI / 2); c.fillText(label, 0, 0); c.restore();
+  c.setLineDash([5, 4]); c.strokeStyle = '#1f6f8b'; c.beginPath();       // equation curve
+  for (let i = 0; i <= 60; i++) {
+    const t = tMax * i / 60, val = key === 'y' ? P.v0 * t - 0.5 * P.g * t * t : P.v0 - P.g * t;
+    i ? c.lineTo(sx(t), sy(val)) : c.moveTo(sx(t), sy(val));
+  }
+  c.stroke(); c.setLineDash([]);
+  if (lastLog) {                                                          // measured curve
+    c.strokeStyle = '#d1432b'; c.lineWidth = 2; c.beginPath();
+    lastLog.pts.forEach((p, i) => i ? c.lineTo(sx(p.t), sy(p[key])) : c.moveTo(sx(p.t), sy(p[key])));
+    c.stroke(); c.lineWidth = 1;
+  }
+}
+function drawGraphs() {
+  if (!calc.tAir) return;
+  drawGraph($('gy'), 'y', 0, calc.hMax * 1.1, 'height y (m)');
+  drawGraph($('gv'), 'v', -P.v0, P.v0, 'velocity v (m/s)');
+}
+
+/* ---------- Validation: 3 input sets, formula vs. simulation ---------- */
+function runTests() {
+  const cases = [ { v0:5, g:9.81 }, { v0:5, g:1.62 }, { v0:10, g:9.81 } ];
+  const dt = 1 / 120, tol = 1;                                           // step size and tolerance (%)
+  let html = '<table><tr><th>Case</th><th>v₀ (m/s)</th><th>g (m/s²)</th><th>h_max formula (m)</th><th>h_max sim (m)</th>' +
+             '<th>t_air formula (s)</th><th>t_air sim (s)</th><th>Largest difference</th><th>Result</th></tr>';
+  cases.forEach((c, i) => {
+    const f = formulas(c.v0, c.g), s = { y:0, v:c.v0, t:0 };
+    let peak = 0, landed = false;
+    while (!landed) { landed = stepJump(s, c.g, dt); peak = Math.max(peak, s.y); }
+    const dH = Math.abs(peak - f.hMax) / f.hMax * 100, dT = Math.abs(s.t - f.tAir) / f.tAir * 100;
+    const worst = Math.max(dH, dT), ok = worst <= tol;
+    html += '<tr><td>' + (i + 1) + '</td><td>' + c.v0 + '</td><td>' + c.g + '</td><td>' + f.hMax.toFixed(3) + '</td><td>' + peak.toFixed(3) +
+            '</td><td>' + f.tAir.toFixed(3) + '</td><td>' + s.t.toFixed(3) + '</td><td>' + worst.toFixed(3) + ' %</td>' +
+            '<td class="' + (ok ? 'pass' : 'fail') + '">' + (ok ? 'PASS' : 'CHECK') + '</td></tr>';
+  });
+  $('testOut').innerHTML = html + '</table><small>Method: step-by-step kinematics, step size Δt = 1/120 s, tolerance ' + tol + ' %.</small>';
+}
+
+/* ---------- Events ---------- */
+$('start').onclick = startGame;
+$('jumpBtn').onclick = jump;
+$('apply').onclick = applyInputs;
+$('runTests').onclick = runTests;
+$('planet').onchange = () => { if ($('planet').value !== 'custom') { $('g').value = $('planet').value; applyInputs(); } };
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) { if (e.key === 'Enter') applyInputs(); return; }
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+});
+applyInputs();
+</script>
+</body>
+</html>
