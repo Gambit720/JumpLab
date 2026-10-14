@@ -51,6 +51,7 @@
     <section>
       <div class="scoreboard">
         <div><span>Distance</span><strong id="score">0.0 m</strong></div>
+        <div><span>Level</span><strong id="level">1</strong></div>
         <div><span>Best</span><strong id="bestScore">0.0 m</strong></div>
       </div>
       <canvas id="game" width="720" height="260" aria-label="Game area"></canvas>
@@ -128,7 +129,7 @@
 
   <section class="wide">
     <h2>How to use, assumptions, application, credits</h2>
-    <p><b>Instructions:</b> enter values and press Apply inputs, press Start, then press Space or the Up arrow to jump. Hit an obstacle and the run ends. Your score is the horizontal distance in metres.</p>
+    <p><b>Instructions:</b> enter values and press Apply inputs, press Start, then press Space or the Up arrow to jump. Hit an obstacle and the run ends. Your score is the horizontal distance in metres. The game gets harder as you go: every 50 m is a new level, obstacles appear closer together, and later levels add double obstacles.</p>
     <p><b>Assumptions:</b> constant gravitational acceleration during a jump, no air resistance, jump starts from the ground with vertical speed v₀, motion in a straight line. The animation uses a declared scale (see the note under the game); labels and numbers use real SI units.</p>
     <p><b>Real-life application:</b> a jump is projectile motion. The same equations describe athletes, vehicles launching off ramps, and why a person jumps much higher on the Moon.</p>
     <p><b>Credits:</b> inspired by the Chrome "dino" offline game (original sprites and code not used). Starter code drafted with AI assistance (Claude by Anthropic) and tested/edited by big bros group. Marty, Jade, Josh, Lemuel, Fares, Matthew, Nash</p>
@@ -170,8 +171,22 @@ let bestDistance = (() => {
   }
 })();
 
+/* ---------- Difficulty: gets harder as distance increases ----------
+   A new level starts every LEVEL_STEP metres. Difficulty ramps up until MAX_RAMP_DIST.
+   The physics inputs (v0, g, game speed) never change, so the calculated results stay correct. */
+const LEVEL_STEP = 50, MAX_RAMP_DIST = 250;
+const levelNum = () => Math.floor(distance / LEVEL_STEP) + 1;
+const rampAmount = () => Math.min(distance / MAX_RAMP_DIST, 1);    // 0 at the start, 1 at full difficulty
+function canClearPair() {          // can one jump clear two obstacles placed close together?
+  const spare = P.v0 * P.v0 - 2 * P.g * 1.0;                       // v² at obstacle height (1.0 m)
+  if (spare <= 0) return false;
+  const distAbove = P.speed * 2 * Math.sqrt(spare) / P.g;         // metres travelled while higher than the obstacle
+  return distAbove >= 3.4;                                         // pair is 2.1 m long + 0.6 m player + safety margin
+}
+
 function updateScoreboard() {
   $('score').textContent = distance.toFixed(1) + ' m';
+  $('level').textContent = levelNum();
   $('bestScore').textContent = bestDistance.toFixed(1) + ' m';
 }
 
@@ -259,7 +274,11 @@ function loop(now) {
   const last = obstacles[obstacles.length - 1];
   if (!last || last.x < worldW() - nextGap) {
     obstacles.push({ x:worldW(), w:0.6, h:1.0 });
-    nextGap = P.speed * calc.tAir + 3 + Math.random() * 5;     // always leaves room to land and jump again
+    const ramp = rampAmount();
+    // from level 2 onward, sometimes add a second obstacle close behind (only if one jump can clear both)
+    if (ramp > 0.2 && Math.random() < 0.4 * ramp && canClearPair()) obstacles.push({ x:worldW() + 1.5, w:0.6, h:1.0 });
+    // the spare space after each jump shrinks as the run goes on, but never below 1.5 m, so a landing and re-jump is still possible
+    nextGap = P.speed * calc.tAir + Math.max(1.5, (3 + Math.random() * 5) * (1 - 0.65 * ramp));
   }
   if (player.air) {
     const s = { y:player.y, v:player.v, t:jumpLog.t };
